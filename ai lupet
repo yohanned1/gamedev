@@ -1,0 +1,1006 @@
+/*
+ * BUDGET BATTLE - raylib story mode (click to play)
+ *
+ * Build (Windows / MinGW):
+ *   gcc main.c -o BudgetBattle.exe -lraylib -lopengl32 -lgdi32 -lwinmm
+ * Build (Linux):
+ *   gcc main.c -o BudgetBattle -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
+ * Build (macOS):
+ *   gcc main.c -o BudgetBattle -lraylib -framework OpenGL -framework Cocoa -framework IOKit
+ *
+ * Controls: Left click / Space / Enter = continue, click buttons or press 1-4 to choose.
+ *
+ * HOW TO ADD STORY: add lines to a day array (SAY / ASK / TITLE / DONE macros),
+ * add a ChoiceDef to the `choices` table for new mini-games, then add the day
+ * to the `days` table and raise DAYS_WRITTEN.
+ */
+
+#include "raylib.h"
+#include <stdio.h>
+#include <string.h>
+
+#define SCREEN_W 1000
+#define SCREEN_H 650
+#define MAX_CHOICES 4
+#define MAX_NAME 20
+#define TOTAL_DAYS 30
+#define DAYS_WRITTEN 5
+#define STARTING_MONEY 200 /* original was 0, which made the PHP 50/120 meals unaffordable */
+#define SAVE_FILE "savegame.dat"
+
+/* ------------------------------------------------------------------ */
+/*  DATA                                                               */
+/* ------------------------------------------------------------------ */
+
+typedef struct Player
+{
+    char name[50];
+    int gender;
+    int money;
+    int energy;
+    int happiness;
+} Player;
+
+typedef enum
+{
+    SCREEN_MENU,
+    SCREEN_CREATE,
+    SCREEN_STORY,
+    SCREEN_ENDING
+} GameScreen;
+
+typedef enum
+{
+    STEP_TITLE,
+    STEP_SAY,
+    STEP_CHOICE,
+    STEP_END
+} StepType;
+
+typedef struct
+{
+    StepType type;
+    const char *speaker;
+    const char *text;
+    int choiceId;
+} Step;
+
+typedef struct
+{
+    const Step *steps;
+    int count;
+} DayScript;
+
+/* A choice / mini-game screen */
+typedef struct
+{
+    const char *title;
+    const char *prompt;
+    const char *infoLeft;  /* optional panels (receipt / tray) */
+    const char *infoRight;
+    int count;
+    const char *options[MAX_CHOICES];
+
+    /* correct == -1  -> every option has its own cost/effects (like breakfast) */
+    int correct;
+    int cost[MAX_CHOICES];
+    int energy[MAX_CHOICES];
+    int happy[MAX_CHOICES];
+    const char *msg[MAX_CHOICES];
+
+    /* correct >= 0   -> quiz style: right / wrong result */
+    int goodE, goodH, badE, badH;
+    const char *goodMsg;
+    const char *badMsg;
+} ChoiceDef;
+
+typedef struct
+{
+    GameScreen screen;
+    Player player;
+    int day;   /* 0-based */
+    int step;
+    float shown; /* typewriter progress */
+    bool showResult;
+    char resultMsg[200];
+    char resultStats[100];
+    char npc[24]; /* last NPC who spoke (drawn on screen) */
+    char toast[96];
+    float toastTimer;
+} Game;
+
+typedef struct
+{
+    Player player;
+    int day;
+} SaveData;
+
+/* ------------------------------------------------------------------ */
+/*  STORY SCRIPT  (use {name} to insert the player's name)             */
+/* ------------------------------------------------------------------ */
+
+#define TITLE(t) {STEP_TITLE, "", t, 0}
+#define SAY(s, t) {STEP_SAY, s, t, 0}
+#define ASK(id) {STEP_CHOICE, "", "", id}
+#define DONE(t) {STEP_END, "", t, 0}
+
+static const Step day1[] = {
+    TITLE("DAY 1: FIRST DAY"),
+    SAY("Narrator", "[7:00 AM - TUP MANILA] You arrive at TUP Manila carrying your backpack."),
+    SAY("Narrator", "Students are walking toward their classrooms."),
+    SAY("Player", "New chapter, bagong environment. Sana naman this time, hindi puro problema."),
+    SAY("Narrator", "Suddenly, someone taps your shoulder."),
+    SAY("Jelo", "Uy! Ikaw ba si {name}? Dito ka rin ba?"),
+    SAY("Player", "Oo. Bakit?"),
+    SAY("Jelo", "Nice! Ako si Jelo. First day mo rin?"),
+    SAY("Player", "Yeah. Medyo nangangapa pa nga ako dito."),
+    SAY("Jelo", "Same! same! Anyway, tara. Kain muna tayo bago class."),
+    SAY("Player", "Ngayon agad? Kakadating ko lang."),
+    SAY("Jelo", "Omsim! importante ang breakfast. Tsaka libre mo?"),
+    SAY("Player", "Ha? First day pa lang, uutangan mo na ako?"),
+    SAY("Jelo", "HAHAHA! Eme lang. Wala rin akong pera."),
+    SAY("Player", "Sige na nga. Tara, kain tayo."),
+    ASK(0), /* breakfast */
+    SAY("Jelo", "Busog ka na? Tara na, baka ma-late tayo sa first class!"),
+    SAY("Player", "Wait lang! First day pa lang, ayoko nang ma-late men."),
+    SAY("Jelo", "Chill ka lang! Alam ko na mga shortcuts dito. Sundan mo 'ko!"),
+    SAY("Narrator", "You and Jelo walk toward your classroom, unaware of the challenges waiting for you."),
+    SAY("Narrator", "A few minutes later, you finally arrive at your classroom."),
+    SAY("Jelo", "Welcome to college life! Dito, maraming activities, deadlines, at bawal matulog ng 8 hrs."),
+    SAY("Player", "Aww, first day pa lang, tinatakot mo na ako."),
+    SAY("Jelo", "Edni (hindi) kita tinatakot. Pinaghahanda lang kita. HAHAHA!"),
+    SAY("Narrator", "Your professor enters the room and introduces the course."),
+    SAY("Professor", "Good morning, everyone! I hope you're ready for this semester."),
+    SAY("Player", "Okay, this might be a challenging semester. Kailangan kong matutong mag-manage ng time at pera."),
+    SAY("Narrator", "Your first class finally ends. You pack your things and prepare to leave."),
+    SAY("Jelo", "So, how was your first class? Ready ka na ba sa college life?"),
+    SAY("Player", "I guess. Pero kailangan ko ring maghanap ng paraan para kumita ng pera."),
+    SAY("Jelo", "Actually, may alam akong hiring malapit dito. Gusto mo bang subukan?"),
+    SAY("Player", "Hiring? Saan?"),
+    SAY("Jelo", "May fast-food branch malapit lang dito. Kailangan daw nila ng bagong crew."),
+    SAY("Player", "Pwede kaya akong mag-apply kahit student ako?"),
+    SAY("Jelo", "Malay mo! At least may chance kang kumita habang nag-aaral."),
+    SAY("Player", "Sige. Susubukan ko bukas. Kailangan ko rin talaga ng extra income."),
+    SAY("Narrator", "After a long first day, you head home thinking about your studies, expenses, and the job opportunity."),
+    SAY("Narrator", "Tomorrow, a new challenge awaits."),
+    DONE("DAY 1 COMPLETE")};
+
+static const Step day2[] = {
+    TITLE("DAY 2: JOB APPLICATION"),
+    SAY("Narrator", "The next afternoon, you arrive at a fast-food branch near TUP Manila."),
+    SAY("Player", "Sana matanggap ako. Kailangan ko talaga ng trabaho."),
+    SAY("Jelo", "Relax! Just be yourself. Basta huwag mong sabihin na wala kang experience sa lahat. HAHAHA!"),
+    SAY("Player", "Omsim HAHAHA! Sige na, pasok na tayo."),
+    SAY("Narrator", "Inside the branch, you notice a crew member arranging orders."),
+    SAY("Jelo", "Mika! May ipapakilala ako sa'yo. Siya yung friend kong naghahanap ng work."),
+    SAY("Mika", "Oh, hello! Ikaw pala yung applicant. I'm Mika. Nice to meet you!"),
+    SAY("Player", "Hi! Nice to meet you too."),
+    SAY("Mika", "Wait lang. Tawagin ko muna yung manager namin."),
+    SAY("Narrator", "A few moments later, the manager approaches you."),
+    SAY("Sir Dante", "Good afternoon. I'm Sir Dante, the branch manager. Ikaw ba yung gustong mag-apply?"),
+    SAY("Player", "Yes, sir. I'm currently studying at TUP Manila, and I'm looking for a part-time job."),
+    SAY("Sir Dante", "Do you have any experience working in a fast-food restaurant?"),
+    SAY("Player", "Wala pa po, sir. Pero willing po akong matuto."),
+    SAY("Sir Dante", "Good. We need someone responsible, especially during busy hours."),
+    SAY("Mika", "Don't worry! I'll help you learn the basics."),
+    SAY("Sir Dante", "Alright. We'll give you a chance. You can start your training tomorrow."),
+    SAY("Player", "Thank you, sir! I'll do my best."),
+    SAY("Jelo", "Diba! Sabi ko sa'yo may chance ka! Libre mo na ako mamaya. HAHAHA!"),
+    SAY("Player", "LALA! Wala pa nga akong sahod!"),
+    SAY("Narrator", "After the interview, Mika takes you to the preparation area."),
+    SAY("Mika", "Since you're new here, let's start with something simple: checking customer orders."),
+    SAY("Player", "So kailangan ko lang siguraduhin na tama lahat ng items?"),
+    SAY("Mika", "Exactly! Always check the receipt before giving the order."),
+    SAY("Mika", "Okay, may isang order tayo dito. Let's see if you can spot the mistake."),
+    SAY("Narrator", "Mika places a food tray in front of you."),
+    ASK(1), /* order checking */
+    SAY("Mika", "Always double-check the receipt before serving!"),
+    SAY("Mika", "Not bad! Checking orders carefully is one of the most important things here."),
+    SAY("Player", "At least may natutunan ako today. Medyo nakaka-pressure din pala."),
+    SAY("Mika", "Masasanay ka din. Practice makes perfect!"),
+    SAY("Narrator", "Your first training activity is complete. You head home, preparing for your first official training shift tomorrow."),
+    DONE("DAY 2 COMPLETE")};
+
+static const Step day3[] = {
+    TITLE("DAY 3: FIRST TRAINING SHIFT"),
+    SAY("Narrator", "The next afternoon, you arrive at the fast-food branch for your first official training shift."),
+    SAY("Player", "First day ko sa actual work. Sana hindi ako magkamali."),
+    SAY("Mika", "Good aftie! Ready ka na ba? Today, tuturuan kita kung paano mag-handle ng customer orders."),
+    SAY("Player", "Ready na! I'll do my best."),
+    SAY("Sir Dante", "Remember, customer satisfaction is important. Always be polite and attentive."),
+    SAY("Player", "Understood, sir!"),
+    SAY("Narrator", "Mika brings you to the counter and prepares your first customer order."),
+    SAY("Mika", "Okay, let's see how you handle your first customer!"),
+    ASK(2), /* customer service */
+    SAY("Mika", "Good job! Remember, always stay polite when dealing with customers."),
+    SAY("Player", "Got it! I'll keep that in mind."),
+    SAY("Narrator", "You finish your first customer-service activity and continue your training."),
+    SAY("Mika", "That's enough for today. You're getting the hang of it!"),
+    SAY("Player", "Thank you for guiding me. Marami pa akong kailangang matutunan."),
+    SAY("Mika", "Don't worry. Tomorrow, you'll get to try something new."),
+    SAY("Narrator", "After your first training shift, you head home to rest and prepare for tomorrow."),
+    DONE("DAY 3 COMPLETE")};
+
+static const Step day4[] = {
+    TITLE("DAY 4: HANDLING ORDERS"),
+    SAY("Narrator", "The next afternoon, you arrive at work. The branch is unusually busy."),
+    SAY("Mika", "Good timing! Lunch rush is about to start. Are you ready?"),
+    SAY("Player", "Wait, ang daming customers! Ganito ba lagi kapag lunch break?"),
+    SAY("Mika", "Sometimes! Just stay calm and focus on one order at a time."),
+    SAY("Sir Dante", "We need everyone's help today. Please work carefully and avoid mistakes."),
+    SAY("Player", "Understood, sir. I'll do my best."),
+    SAY("Narrator", "You take your position at the counter. Several customers are waiting for their orders."),
+    SAY("Mika", "Alright! Let's see how you handle the pressure."),
+    SAY("Narrator", "Your next training challenge is about to begin."),
+    ASK(3), /* multiple orders */
+    SAY("Mika", "Good job! Always compare the receipt with the prepared order."),
+    SAY("Player", "That was stressful! But I think I'm getting better."),
+    SAY("Narrator", "You successfully complete another training challenge."),
+    SAY("Mika", "Not bad! You're becoming more confident with every shift."),
+    SAY("Player", "Thanks! I just need more practice."),
+    SAY("Sir Dante", "Good work today. Keep improving, and you'll be ready for regular shifts."),
+    SAY("Narrator", "Your shift ends. You head home, tired but proud of your progress."),
+    DONE("DAY 4 COMPLETE")};
+
+static const Step day5[] = {
+    TITLE("DAY 5: SALARY DISCUSSION"),
+    SAY("Narrator", "You arrive at the branch for another shift. Sir Dante asks to speak with you."),
+    SAY("Sir Dante", "Good afternoon! You've been doing well during your training."),
+    SAY("Player", "Thank you, sir! I'm still learning, but I'll keep improving."),
+    SAY("Sir Dante", "Since you've completed several training shifts, let's discuss your work schedule and salary."),
+    SAY("Player", "Really, sir? That's great news!"),
+    SAY("Sir Dante", "Your salary will be based on your agreed working schedule. We'll explain the payment details before your regular shifts begin."),
+    SAY("Player", "Understood, sir. This will really help me with my school expenses."),
+    SAY("Mika", "See? Your hard work is starting to pay off!"),
+    SAY("Player", "Hopefully! Tuition and daily expenses won't pay themselves. HAHAHA!"),
+    SAY("Narrator", "You feel more motivated knowing that your job can help support your studies."),
+    DONE("DAY 5 COMPLETE")};
+
+#define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+static const DayScript days[DAYS_WRITTEN] = {
+    {day1, COUNT(day1)},
+    {day2, COUNT(day2)},
+    {day3, COUNT(day3)},
+    {day4, COUNT(day4)},
+    {day5, COUNT(day5)}};
+
+/* ------------------------------------------------------------------ */
+/*  CHOICES / MINI-GAMES (index = the number used in ASK(n))           */
+/* ------------------------------------------------------------------ */
+
+static const ChoiceDef choices[] = {
+    /* 0: breakfast */
+    {
+        .title = "BREAKFAST TIME",
+        .prompt = "Jelo: Bro, gutom na ako. Ano'ng trip mong breakfast?",
+        .count = 3,
+        .options = {"Carinderia meal - PHP 50", "Fast-food meal - PHP 120", "Skip breakfast - PHP 0"},
+        .correct = -1,
+        .cost = {50, 120, 0},
+        .energy = {15, 20, -10},
+        .happy = {5, 15, -5},
+        .msg = {"You bought a carinderia meal.", "You bought a fast-food meal.", "You decided to skip breakfast."},
+    },
+    /* 1: order checking */
+    {
+        .title = "ORDER CHECKING GAME",
+        .prompt = "Which item has an incorrect quantity?",
+        .infoLeft = "CUSTOMER RECEIPT\nBurger: 1\nFries: 1\nDrink: 1",
+        .infoRight = "ACTUAL FOOD TRAY\nBurger: 1\nFries: 1\nDrink: 2",
+        .count = 3,
+        .options = {"Burger", "Fries", "Drink"},
+        .correct = 2,
+        .goodE = -5, .goodH = 5, .badE = -10, .badH = -5,
+        .goodMsg = "Correct! You spotted the extra drink.",
+        .badMsg = "Incorrect! The drink quantity was wrong.",
+    },
+    /* 2: customer service */
+    {
+        .title = "CUSTOMER SERVICE GAME",
+        .prompt = "A customer approaches the counter: \"Excuse me, my order is taking too long!\" How will you respond?",
+        .count = 3,
+        .options = {"Apologize and politely check the order.", "Ignore the customer.", "Tell the customer to wait impatiently."},
+        .correct = 0,
+        .goodE = -5, .goodH = 5, .badE = -5, .badH = -5,
+        .goodMsg = "Correct! The customer appreciates your politeness.",
+        .badMsg = "The customer becomes more frustrated.",
+    },
+    /* 3: multiple order challenge */
+    {
+        .title = "MULTIPLE ORDER CHALLENGE",
+        .prompt = "Which item is missing?",
+        .infoLeft = "CUSTOMER RECEIPT\nBurger: 2\nFries: 2\nDrinks: 1",
+        .infoRight = "PREPARED ORDER\nBurger: 2\nFries: 1\nDrinks: 1",
+        .count = 3,
+        .options = {"Burger", "Fries", "Drinks"},
+        .correct = 1,
+        .goodE = -10, .goodH = 5, .badE = -10, .badH = -5,
+        .goodMsg = "Correct! One order of fries is missing.",
+        .badMsg = "Incorrect! You missed the missing fries.",
+    },
+};
+
+/* ------------------------------------------------------------------ */
+/*  YOUR ORIGINAL GAME LOGIC (unchanged)                               */
+/* ------------------------------------------------------------------ */
+
+void updateMoney(struct Player *player, int amount)
+{
+    player->money += amount;
+}
+
+void updateEnergy(struct Player *player, int amount)
+{
+    player->energy += amount;
+    if (player->energy > 100)
+        player->energy = 100;
+    if (player->energy < 0)
+        player->energy = 0;
+}
+
+void updateHappiness(struct Player *player, int amount)
+{
+    player->happiness += amount;
+    if (player->happiness > 100)
+        player->happiness = 100;
+    if (player->happiness < 0)
+        player->happiness = 0;
+}
+
+int spendMoney(struct Player *player, int amount)
+{
+    if (amount <= 0)
+        return 0;
+    if (player->money < amount)
+        return 0;
+    player->money -= amount;
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  SAVE / LOAD                                                        */
+/* ------------------------------------------------------------------ */
+
+static void SaveGame(const Game *g)
+{
+    FILE *f = fopen(SAVE_FILE, "wb");
+    if (!f)
+        return;
+    SaveData d;
+    d.player = g->player;
+    d.day = g->day;
+    fwrite(&d, sizeof(d), 1, f);
+    fclose(f);
+}
+
+static bool LoadGame(Game *g)
+{
+    FILE *f = fopen(SAVE_FILE, "rb");
+    if (!f)
+        return false;
+    SaveData d;
+    size_t n = fread(&d, sizeof(d), 1, f);
+    fclose(f);
+    if (n != 1 || d.day < 0 || d.day >= DAYS_WRITTEN)
+        return false;
+    g->player = d.player;
+    g->day = d.day;
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  UI HELPERS                                                         */
+/* ------------------------------------------------------------------ */
+
+static bool Button(Rectangle r, const char *label, bool enabled, bool selected)
+{
+    Vector2 m = GetMousePosition();
+    bool hover = enabled && CheckCollisionPointRec(m, r);
+
+    Color bg = (Color){45, 60, 110, 255};
+    if (!enabled)
+        bg = (Color){70, 70, 70, 255};
+    else if (selected)
+        bg = (Color){60, 140, 90, 255};
+    else if (hover)
+        bg = (Color){80, 120, 200, 255};
+
+    DrawRectangleRounded(r, 0.25f, 8, bg);
+    DrawRectangleLinesEx(r, 2, (hover || selected) ? WHITE : (Color){150, 160, 200, 255});
+
+    int fs = 24;
+    int tw = MeasureText(label, fs);
+    DrawText(label, (int)(r.x + (r.width - tw) / 2), (int)(r.y + (r.height - fs) / 2), fs,
+             enabled ? WHITE : GRAY);
+
+    return hover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+}
+
+static void DrawCentered(const char *text, int y, int size, Color c)
+{
+    DrawText(text, (SCREEN_W - MeasureText(text, size)) / 2, y, size, c);
+}
+
+static void Toast(Game *g, const char *msg)
+{
+    snprintf(g->toast, sizeof(g->toast), "%s", msg);
+    g->toastTimer = 2.0f;
+}
+
+static void DrawToast(const Game *g)
+{
+    if (g->toastTimer <= 0)
+        return;
+    int w = MeasureText(g->toast, 22) + 40;
+    Rectangle r = {(SCREEN_W - w) / 2.0f, SCREEN_H - 70, (float)w, 44};
+    DrawRectangleRounded(r, 0.4f, 8, Fade(BLACK, 0.85f));
+    DrawText(g->toast, (int)r.x + 20, (int)r.y + 11, 22, WHITE);
+}
+
+/* Wrap text to a pixel width by inserting '\n' */
+static void WrapText(const char *src, char *out, int outSize, int maxWidth, int fontSize)
+{
+    char line[320] = {0};
+    int outLen = 0;
+    const char *p = src;
+    out[0] = '\0';
+
+    while (*p)
+    {
+        char word[64];
+        int wl = 0;
+        while (*p == ' ')
+            p++;
+        while (*p && *p != ' ' && wl < 63)
+            word[wl++] = *p++;
+        word[wl] = '\0';
+        if (wl == 0)
+            break;
+
+        char test[400];
+        if (line[0])
+            snprintf(test, sizeof(test), "%s %s", line, word);
+        else
+            snprintf(test, sizeof(test), "%s", word);
+
+        if (line[0] && MeasureText(test, fontSize) > maxWidth)
+        {
+            if (outLen >= outSize - 2)
+                break;
+            outLen += snprintf(out + outLen, outSize - outLen, "%s\n", line);
+            snprintf(line, sizeof(line), "%s", word);
+        }
+        else
+        {
+            snprintf(line, sizeof(line), "%s", test);
+        }
+    }
+    if (outLen < outSize)
+        snprintf(out + outLen, outSize - outLen, "%s", line);
+}
+
+/* Replace {name} with the player's name */
+static void ApplyName(const char *src, const char *name, char *out, int outSize)
+{
+    int o = 0;
+    while (*src && o < outSize - 1)
+    {
+        if (strncmp(src, "{name}", 6) == 0)
+        {
+            for (const char *n = name; *n && o < outSize - 1; n++)
+                out[o++] = *n;
+            src += 6;
+        }
+        else
+        {
+            out[o++] = *src++;
+        }
+    }
+    out[o] = '\0';
+}
+
+/* ------------------------------------------------------------------ */
+/*  CHARACTERS & BACKGROUNDS (all drawn with shapes - swap for sprites) */
+/* ------------------------------------------------------------------ */
+
+static bool IsNpc(const char *name)
+{
+    return name[0] && strcmp(name, "Narrator") != 0 && strcmp(name, "Player") != 0;
+}
+
+static void NpcStyle(const char *name, Color *shirt, Color *hair, bool *longHair)
+{
+    *longHair = false;
+    *hair = (Color){30, 30, 30, 255};
+    *shirt = SKYBLUE;
+
+    if (strcmp(name, "Jelo") == 0)
+        *shirt = ORANGE;
+    else if (strcmp(name, "Mika") == 0)
+    {
+        *shirt = (Color){170, 90, 200, 255};
+        *hair = (Color){70, 35, 20, 255};
+        *longHair = true;
+    }
+    else if (strcmp(name, "Sir Dante") == 0)
+    {
+        *shirt = (Color){60, 60, 70, 255};
+        *hair = (Color){50, 50, 50, 255};
+    }
+    else if (strcmp(name, "Professor") == 0)
+    {
+        *shirt = (Color){120, 80, 50, 255};
+        *hair = (Color){170, 170, 170, 255};
+    }
+}
+
+static void DrawCharacter(float x, float y, Color shirt, Color hair, bool longHair, bool speaking)
+{
+    if (speaking)
+        y -= 10;
+    Color skin = (Color){240, 200, 160, 255};
+
+    if (longHair)
+    {
+        DrawRectangleRounded((Rectangle){x - 48, y - 160, 96, 110}, 0.4f, 8, hair);
+    }
+    DrawRectangleRounded((Rectangle){x - 48, y - 105, 96, 130}, 0.3f, 8, shirt);
+    DrawCircle((int)x, (int)y - 150 + 0, 42, skin);
+    DrawCircleSector((Vector2){x, y - 150}, 45, 180, 360, 24, hair);
+    DrawCircle((int)x - 14, (int)y - 146, 5, BLACK);
+    DrawCircle((int)x + 14, (int)y - 146, 5, BLACK);
+    DrawRectangle((int)x - 10, (int)y - 126, 20, 3, (Color){150, 60, 60, 255});
+
+    if (!speaking)
+        DrawRectangle((int)x - 60, (int)y - 200, 120, 240, Fade(BLACK, 0.12f)); /* soft dim */
+}
+
+static void DrawBackground(int day)
+{
+    if (day == 0)
+    {
+        /* Campus */
+        DrawRectangleGradientV(0, 0, SCREEN_W, 400, (Color){135, 206, 235, 255}, (Color){210, 235, 250, 255});
+        DrawRectangle(0, 380, SCREEN_W, 270, (Color){110, 160, 110, 255});
+        DrawRectangle(120, 110, 760, 270, (Color){196, 160, 130, 255});
+        DrawRectangle(120, 110, 760, 30, (Color){140, 40, 40, 255});
+        for (int r = 0; r < 2; r++)
+            for (int c = 0; c < 8; c++)
+                DrawRectangle(150 + c * 90, 165 + r * 100, 55, 65, (Color){170, 215, 240, 255});
+        DrawRectangle(470, 300, 60, 80, (Color){90, 60, 40, 255});
+        DrawCentered("TUP MANILA", 114, 22, WHITE);
+    }
+    else
+    {
+        /* Fast-food branch */
+        DrawRectangleGradientV(0, 0, SCREEN_W, SCREEN_H, (Color){255, 220, 180, 255}, (Color){250, 170, 120, 255});
+        DrawRectangle(250, 70, 500, 60, (Color){200, 40, 40, 255});
+        DrawCentered("FAST FOOD", 82, 38, (Color){255, 220, 60, 255});
+        DrawRectangle(120, 150, 760, 110, (Color){40, 40, 45, 255});
+        DrawText("BURGER   FRIES   DRINK", 210, 190, 36, (Color){255, 220, 60, 255});
+        DrawRectangle(0, 330, SCREEN_W, 110, (Color){130, 80, 50, 255});
+        DrawRectangle(0, 330, SCREEN_W, 12, (Color){170, 110, 70, 255});
+    }
+}
+
+static void DrawHUD(const Game *g)
+{
+    const Player *p = &g->player;
+    DrawRectangle(0, 0, SCREEN_W, 44, Fade(BLACK, 0.8f));
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "PHP %d", p->money);
+    DrawText(buf, 15, 11, 22, (Color){255, 220, 60, 255});
+
+    DrawText("Energy", 190, 11, 20, WHITE);
+    DrawRectangle(265, 13, 150, 18, (Color){60, 60, 60, 255});
+    DrawRectangle(265, 13, (int)(150 * p->energy / 100.0f), 18, (Color){80, 200, 100, 255});
+    DrawRectangleLines(265, 13, 150, 18, WHITE);
+
+    DrawText("Happy", 440, 11, 20, WHITE);
+    DrawRectangle(505, 13, 150, 18, (Color){60, 60, 60, 255});
+    DrawRectangle(505, 13, (int)(150 * p->happiness / 100.0f), 18, (Color){255, 130, 180, 255});
+    DrawRectangleLines(505, 13, 150, 18, WHITE);
+
+    snprintf(buf, sizeof(buf), "DAY %d / %d", g->day + 1, TOTAL_DAYS);
+    DrawText(buf, SCREEN_W - MeasureText(buf, 22) - 15, 11, 22, WHITE);
+}
+
+/* ------------------------------------------------------------------ */
+/*  GAME FLOW                                                          */
+/* ------------------------------------------------------------------ */
+
+static void BeginDay(Game *g)
+{
+    g->step = 0;
+    g->shown = 0;
+    g->showResult = false;
+    g->npc[0] = '\0';
+    SaveGame(g);
+}
+
+static void StartNewGame(Game *g)
+{
+    g->player.money = STARTING_MONEY;
+    g->player.energy = 100;
+    g->player.happiness = 100;
+    g->day = 0;
+    g->screen = SCREEN_STORY;
+    BeginDay(g);
+}
+
+static void ResolveChoice(Game *g, const ChoiceDef *c, int pick)
+{
+    Player *p = &g->player;
+    int m0 = p->money, e0 = p->energy, h0 = p->happiness;
+    const char *msg;
+
+    if (c->correct < 0)
+    {
+        spendMoney(p, c->cost[pick]);
+        updateEnergy(p, c->energy[pick]);
+        updateHappiness(p, c->happy[pick]);
+        msg = c->msg[pick];
+    }
+    else if (pick == c->correct)
+    {
+        updateEnergy(p, c->goodE);
+        updateHappiness(p, c->goodH);
+        msg = c->goodMsg;
+    }
+    else
+    {
+        updateEnergy(p, c->badE);
+        updateHappiness(p, c->badH);
+        msg = c->badMsg;
+    }
+
+    snprintf(g->resultMsg, sizeof(g->resultMsg), "%s", msg);
+    snprintf(g->resultStats, sizeof(g->resultStats), "Money %+d     Energy %+d     Happiness %+d",
+             p->money - m0, p->energy - e0, p->happiness - h0);
+    g->showResult = true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  SCREENS                                                            */
+/* ------------------------------------------------------------------ */
+
+/* returns true when the player chooses Quit */
+static bool ScreenMenu(Game *g)
+{
+    DrawRectangleGradientV(0, 0, SCREEN_W, SCREEN_H, (Color){20, 30, 70, 255}, (Color){70, 40, 110, 255});
+
+    for (int i = 0; i < 8; i++)
+    {
+        float yy = 80 + (float)((int)(GetTime() * 30 + i * 90) % 600);
+        DrawCircle(90 + i * 120, (int)yy, 18, Fade((Color){255, 215, 0, 255}, 0.35f));
+    }
+
+    DrawCentered("BUDGET BATTLE", 90, 70, (Color){255, 220, 60, 255});
+    DrawCentered("30 Days to Survive", 170, 30, WHITE);
+
+    if (Button((Rectangle){350, 260, 300, 60}, "Start Game", true, false))
+    {
+        memset(&g->player, 0, sizeof(g->player));
+        g->screen = SCREEN_CREATE;
+    }
+    if (Button((Rectangle){350, 340, 300, 60}, "Continue Game", true, false))
+    {
+        if (LoadGame(g))
+        {
+            g->screen = SCREEN_STORY;
+            g->step = 0;
+            g->shown = 0;
+            g->showResult = false;
+            g->npc[0] = '\0';
+        }
+        else
+            Toast(g, "No saved game found.");
+    }
+    if (Button((Rectangle){350, 420, 300, 60}, "Quit Game", true, false))
+        return true;
+
+    DrawCentered("Click to play  |  Space / Enter to continue dialogue", SCREEN_H - 40, 18, Fade(WHITE, 0.6f));
+    return false;
+}
+
+static void ScreenCreate(Game *g)
+{
+    DrawRectangleGradientV(0, 0, SCREEN_W, SCREEN_H, (Color){20, 30, 70, 255}, (Color){40, 70, 120, 255});
+    DrawCentered("CHARACTER CREATION", 50, 44, WHITE);
+
+    /* name input */
+    DrawText("Enter your character's name:", 250, 140, 24, WHITE);
+    Rectangle box = {250, 175, 500, 55};
+    DrawRectangleRounded(box, 0.2f, 8, (Color){15, 20, 40, 255});
+    DrawRectangleLinesEx(box, 2, WHITE);
+
+    int len = (int)strlen(g->player.name);
+    int key = GetCharPressed();
+    while (key > 0)
+    {
+        if (key >= 32 && key <= 125 && len < MAX_NAME)
+        {
+            g->player.name[len++] = (char)key;
+            g->player.name[len] = '\0';
+        }
+        key = GetCharPressed();
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && len > 0)
+        g->player.name[--len] = '\0';
+
+    DrawText(g->player.name, 265, 190, 28, WHITE);
+    if (((int)(GetTime() * 2)) % 2 == 0)
+        DrawText("_", 265 + MeasureText(g->player.name, 28), 190, 28, WHITE);
+
+    /* gender */
+    DrawText("Choose your gender:", 250, 265, 24, WHITE);
+    if (Button((Rectangle){250, 305, 240, 55}, "Male", true, g->player.gender == 1))
+        g->player.gender = 1;
+    if (Button((Rectangle){510, 305, 240, 55}, "Female", true, g->player.gender == 2))
+        g->player.gender = 2;
+
+    /* preview */
+    if (g->player.gender != 0)
+    {
+        bool fem = g->player.gender == 2;
+        DrawCharacter(500, 560, fem ? (Color){220, 90, 150, 255} : (Color){60, 120, 220, 255},
+                      (Color){40, 25, 15, 255}, fem, true);
+    }
+
+    bool ready = len > 0 && g->player.gender != 0;
+    if (Button((Rectangle){250, 390, 240, 55}, "Back", true, false))
+        g->screen = SCREEN_MENU;
+    if (Button((Rectangle){510, 390, 240, 55}, "Start!", ready, false))
+        StartNewGame(g);
+}
+
+static void ScreenStory(Game *g, float dt)
+{
+    const DayScript *d = &days[g->day];
+    const Step *s = &d->steps[g->step];
+    bool click = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) || IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_ENTER);
+
+    if (s->type == STEP_SAY && IsNpc(s->speaker))
+        snprintf(g->npc, sizeof(g->npc), "%s", s->speaker);
+
+    DrawBackground(g->day);
+
+    /* characters */
+    bool fem = g->player.gender == 2;
+    bool playerSpeaking = (s->type == STEP_SAY && strcmp(s->speaker, "Player") == 0);
+    bool npcSpeaking = (s->type == STEP_SAY && IsNpc(s->speaker));
+
+    DrawCharacter(240, 380, fem ? (Color){220, 90, 150, 255} : (Color){60, 120, 220, 255},
+                  (Color){40, 25, 15, 255}, fem, playerSpeaking);
+    if (g->npc[0])
+    {
+        Color shirt, hair;
+        bool lh;
+        NpcStyle(g->npc, &shirt, &hair, &lh);
+        DrawCharacter(760, 380, shirt, hair, lh, npcSpeaking);
+    }
+
+    DrawHUD(g);
+
+    char text[400], wrapped[512], buf[128];
+
+    /* ---------- result panel after a choice ---------- */
+    if (g->showResult)
+    {
+        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Fade(BLACK, 0.6f));
+        Rectangle panel = {150, 170, 700, 280};
+        DrawRectangleRounded(panel, 0.08f, 8, (Color){25, 30, 55, 250});
+        DrawRectangleLinesEx(panel, 3, (Color){255, 220, 60, 255});
+
+        WrapText(g->resultMsg, wrapped, sizeof(wrapped), 640, 28);
+        DrawText(wrapped, 180, 210, 28, WHITE);
+        DrawText(g->resultStats, 180, 340, 22, (Color){255, 220, 60, 255});
+        DrawText("Click to continue", 180, 400, 20, Fade(WHITE, 0.7f));
+
+        if (click)
+        {
+            g->showResult = false;
+            g->step++;
+            g->shown = 0;
+        }
+        return;
+    }
+
+    switch (s->type)
+    {
+    case STEP_TITLE:
+    case STEP_END:
+    {
+        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Fade(BLACK, 0.8f));
+        DrawCentered(s->text, 230, 52, WHITE);
+        if (s->type == STEP_END)
+        {
+            snprintf(buf, sizeof(buf), "Money: PHP %d   Energy: %d/100   Happiness: %d/100",
+                     g->player.money, g->player.energy, g->player.happiness);
+            DrawCentered(buf, 320, 24, (Color){255, 220, 60, 255});
+        }
+        DrawCentered("Click to continue", 440, 22, Fade(WHITE, ((int)(GetTime() * 2) % 2) ? 0.9f : 0.4f));
+
+        if (click)
+        {
+            if (s->type == STEP_TITLE)
+            {
+                g->step++;
+                g->shown = 0;
+            }
+            else
+            {
+                g->day++;
+                if (g->day >= DAYS_WRITTEN)
+                {
+                    g->day = DAYS_WRITTEN - 1;
+                    g->screen = SCREEN_ENDING;
+                }
+                else
+                    BeginDay(g);
+            }
+        }
+        break;
+    }
+
+    case STEP_SAY:
+    {
+        ApplyName(s->text, g->player.name, text, sizeof(text));
+        WrapText(text, wrapped, sizeof(wrapped), 910, 26);
+        int total = (int)strlen(wrapped);
+
+        /* dialogue box */
+        Rectangle box = {20, 440, 960, 190};
+        DrawRectangleRounded(box, 0.08f, 8, Fade(BLACK, 0.82f));
+        DrawRectangleLinesEx(box, 3, WHITE);
+
+        /* name tag */
+        const char *who = strcmp(s->speaker, "Player") == 0 ? g->player.name : s->speaker;
+        Color tagColor = (Color){90, 90, 100, 255};
+        if (strcmp(s->speaker, "Player") == 0)
+            tagColor = (Color){60, 120, 220, 255};
+        else if (IsNpc(s->speaker))
+        {
+            Color hair;
+            bool lh;
+            NpcStyle(s->speaker, &tagColor, &hair, &lh);
+        }
+        int tw = MeasureText(who, 24) + 40;
+        Rectangle tag = {40, 405, (float)tw, 38};
+        DrawRectangleRounded(tag, 0.3f, 8, tagColor);
+        DrawRectangleLinesEx(tag, 2, WHITE);
+        DrawText(who, 60, 412, 24, WHITE);
+
+        /* typewriter */
+        g->shown += 70.0f * dt;
+        if (g->shown > total)
+            g->shown = (float)total;
+
+        DrawText(TextSubtext(wrapped, 0, (int)g->shown), 45, 465, 26, WHITE);
+
+        if (g->shown >= total && ((int)(GetTime() * 2)) % 2 == 0)
+            DrawText("Click to continue >", SCREEN_W - 260, 600, 20, Fade(WHITE, 0.8f));
+
+        if (click)
+        {
+            if (g->shown < total)
+                g->shown = (float)total;
+            else
+            {
+                g->step++;
+                g->shown = 0;
+            }
+        }
+        break;
+    }
+
+    case STEP_CHOICE:
+    {
+        const ChoiceDef *c = &choices[s->choiceId];
+
+        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Fade(BLACK, 0.55f));
+        Rectangle panel = {80, 60, 840, 520};
+        DrawRectangleRounded(panel, 0.05f, 8, (Color){25, 30, 55, 245});
+        DrawRectangleLinesEx(panel, 3, (Color){255, 220, 60, 255});
+
+        DrawCentered(c->title, 80, 34, (Color){255, 220, 60, 255});
+
+        WrapText(c->prompt, wrapped, sizeof(wrapped), 780, 24);
+        DrawText(wrapped, 120, 130, 24, WHITE);
+
+        if (c->infoLeft)
+        {
+            DrawRectangleRounded((Rectangle){120, 205, 370, 115}, 0.1f, 8, (Color){240, 235, 215, 255});
+            DrawText(c->infoLeft, 135, 215, 20, BLACK);
+        }
+        if (c->infoRight)
+        {
+            DrawRectangleRounded((Rectangle){510, 205, 370, 115}, 0.1f, 8, (Color){215, 230, 240, 255});
+            DrawText(c->infoRight, 525, 215, 20, BLACK);
+        }
+
+        for (int i = 0; i < c->count; i++)
+        {
+            snprintf(buf, sizeof(buf), "[%d] %s", i + 1, c->options[i]);
+            bool affordable = (c->correct >= 0) || (g->player.money >= c->cost[i]);
+            Rectangle r = {120, 340 + i * 68.0f, 760, 54};
+            bool picked = Button(r, buf, affordable, false);
+            if (affordable && IsKeyPressed(KEY_ONE + i))
+                picked = true;
+            if (picked)
+            {
+                ResolveChoice(g, c, i);
+                break;
+            }
+        }
+        break;
+    }
+    }
+}
+
+static void ScreenEnding(Game *g)
+{
+    DrawRectangleGradientV(0, 0, SCREEN_W, SCREEN_H, (Color){20, 30, 70, 255}, (Color){70, 40, 110, 255});
+    DrawCentered("TO BE CONTINUED...", 120, 56, (Color){255, 220, 60, 255});
+    DrawCentered("You survived the first 5 days of Budget Battle!", 210, 28, WHITE);
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Money: PHP %d", g->player.money);
+    DrawCentered(buf, 290, 28, WHITE);
+    snprintf(buf, sizeof(buf), "Energy: %d/100", g->player.energy);
+    DrawCentered(buf, 330, 28, WHITE);
+    snprintf(buf, sizeof(buf), "Happiness: %d/100", g->player.happiness);
+    DrawCentered(buf, 370, 28, WHITE);
+
+    if (Button((Rectangle){350, 460, 300, 60}, "Back to Menu", true, false))
+        g->screen = SCREEN_MENU;
+}
+
+/* ------------------------------------------------------------------ */
+/*  MAIN                                                               */
+/* ------------------------------------------------------------------ */
+
+int main(void)
+{
+    InitWindow(SCREEN_W, SCREEN_H, "Budget Battle");
+    SetTargetFPS(60);
+
+    Game g;
+    memset(&g, 0, sizeof(g));
+    g.screen = SCREEN_MENU;
+
+    bool quit = false;
+    while (!quit && !WindowShouldClose())
+    {
+        float dt = GetFrameTime();
+        if (g.toastTimer > 0)
+            g.toastTimer -= dt;
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+
+        switch (g.screen)
+        {
+        case SCREEN_MENU:
+            quit = ScreenMenu(&g);
+            break;
+        case SCREEN_CREATE:
+            ScreenCreate(&g);
+            break;
+        case SCREEN_STORY:
+            ScreenStory(&g, dt);
+            break;
+        case SCREEN_ENDING:
+            ScreenEnding(&g);
+            break;
+        }
+
+        DrawToast(&g);
+        EndDrawing();
+    }
+
+    CloseWindow();
+    return 0;
+}
