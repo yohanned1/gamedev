@@ -1,0 +1,869 @@
+#include "raylib.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+struct Player {
+    char name[50];
+    int gender;
+    int money;
+    int energy;
+    int happiness;
+};
+
+// --- Your Game Function Declarations ---
+void displayStatus(struct Player player);
+void updateMoney(struct Player *player, int amount);
+void updateEnergy(struct Player *player, int amount);
+void updateHappiness(struct Player *player, int amount);
+int spendMoney(struct Player *player, int amount);
+void startGame(struct Player *player);
+void day1Story(struct Player *player); // day1 story
+void showDialogue(const char speaker[], const char dialogue[]);
+void breakfastChoice(struct Player *player);
+void day2Story(struct Player *player); // day 2 story
+void orderCheckingGame(struct Player *player);
+void day3Story(struct Player *player);
+void customerServiceGame(struct Player *player);
+void day4Story(struct Player *player);
+void multipleOrderGame(struct Player *player);
+void day5Story(struct Player *player);
+
+// --- Fixed Custom UI Helper ---
+bool DrawMenuButton(int x, int y, int width, int height, const char* text) {
+    Vector2 mousePos = GetMousePosition();
+    bool isHovered = (mousePos.x >= x && mousePos.x <= x + width && mousePos.y >= y && mousePos.y <= y + height);
+    
+    // Draw the button background box cleanly
+    DrawRectangle(x, y, width, height, isHovered ? MAROON : DARKGRAY);
+    DrawRectangleLines(x, y, width, height, WHITE);
+    
+    // FIXED TEXT ALIGNMENT: 
+    // Measures the exact width of your current text array to center it inside your button dimensions dynamically
+    int textWidth = MeasureText(text, 18); // Sized slightly down to 18 so it fits without overflowing
+    DrawText(text, x + (width - textWidth) / 2, y + (height - 18) / 2, 18, WHITE);
+    
+    return isHovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+}
+
+
+int main() {
+    // Initialize Raylib window
+    InitWindow(1200, 700, "Budget Battle");
+    SetTargetFPS(60);
+
+    struct Player player = { "", 0, 0, 100, 100 };
+    
+    // Menu system tracking states
+    // 0 = Main Menu, 1 = Name Input, 2 = Gender Choice, 3 = Running Game, 4 = Saved Game Screen
+    int menuState = 0; 
+    int letterCount = 0;
+
+    // Main window runtime loop
+        // Main window runtime loop
+    while (!WindowShouldClose()) {
+        
+        // --- RENDER PIPELINE ---
+        BeginDrawing();
+        ClearBackground(GOLD);
+
+        switch (menuState) {
+            case 0: // [MAIN MENU]
+                int titleWidth1 = MeasureText("========================", 20);
+                int titleWidth2 = MeasureText("Budget Battle", 45); 
+                int titleWidth3 = MeasureText("30 Days to survive", 22);
+                int menuWidth   = MeasureText("MAIN MENU", 24);
+
+                DrawText("========================", (1200 - titleWidth1) / 2, 100, 20, WHITE);
+                DrawText("Budget Battle", (1200 - titleWidth2) / 2, 135, 45, MAROON);
+                DrawText("30 Days to survive", (1200 - titleWidth3) / 2, 190, 22, GRAY);
+                DrawText("========================", (1200 - titleWidth1) / 2, 225, 20, WHITE);
+                DrawText("MAIN MENU", (1200 - menuWidth) / 2, 280, 24, GOLD);
+
+                if (DrawMenuButton(475, 340, 250, 50, "1. Start Game")) {
+                    memset(player.name, 0, sizeof(player.name));
+                    letterCount = 0;
+                    menuState = 1; 
+                }
+                if (DrawMenuButton(475, 410, 250, 50, "2. Continue Game")) {
+                    menuState = 4;
+                }
+                if (DrawMenuButton(475, 480, 250, 50, "3. Quit Game")) {
+                    CloseWindow();
+                    return 0;
+                }
+                break;
+
+            case 1: // [CHARACTER CREATION - NAME]
+                int titleWidth4 = MeasureText("================================", 20);
+                int titleWidth5 = MeasureText("CHARACTER CREATION", 20); 
+                int titleWidth6 = MeasureText("Enter your character's name:", 22);
+                
+                DrawText("================================", (1200 - titleWidth4) / 2, 80, 20, WHITE);
+                DrawText("CHARACTER CREATION", (1200 - titleWidth5) / 2, 110, 24, MAROON);
+                DrawText("================================", (1200 - titleWidth4) / 2, 140, 20, WHITE);
+                DrawText("Enter your character's name:", (1200 - titleWidth6) / 2, 200, 20, WHITE);
+
+                int key = GetCharPressed();
+                while (key > 0) {
+                    if ((key >= 32) && (key <= 125) && (letterCount < 49)) {
+                        player.name[letterCount] = (char)key;
+                        player.name[letterCount+1] = '\0';
+                        letterCount++;
+                    }
+                    key = GetCharPressed();
+                }
+                if (IsKeyPressed(KEY_BACKSPACE) && letterCount > 0) {
+                    letterCount--;
+                    player.name[letterCount] = '\0';
+                }
+
+                DrawRectangle((1200 - 300) / 2, 240, 300, 50, LIGHTGRAY);
+                DrawRectangleLines((1200 - 300) / 2, 240, 300, 50, WHITE);
+                DrawText(player.name, (1200 - 300) / 2 + 15, 255, 20, BLACK);
+
+                DrawText("Press ENTER to save your name", (1200 - 300) / 2, 320, 16, GRAY);
+                if (IsKeyPressed(KEY_ENTER) && letterCount > 0) {
+                    menuState = 2; 
+                }
+                break;
+
+            case 2: // [CHARACTER CREATION - GENDER]
+                DrawText("Choose your gender:", (1200 - 200) / 2, 180, 22, WHITE);
+
+                if (DrawMenuButton((1200 - 200) / 2, 240, 200, 45, " Male")) {
+                    player.gender = 1;
+                    menuState = 3; 
+                }
+                if (DrawMenuButton((1200 - 200) / 2, 300, 200, 45, " Female")) {
+                    player.gender = 2;
+                    menuState = 3; 
+                }
+                break;
+
+            case 3: // [ACTIVE RUNNING GAMEPLAY]
+                // Setting menuState to an unused number breaks out of this while loop cleanly!
+                menuState = 99; 
+                break;
+
+            case 4: // [CONTINUE SCREEN]
+                DrawText("Checking saved game...", (1200 - 200) / 2, 200, 20, RED);
+                if (DrawMenuButton((1200 - 200) / 2, 300, 200, 45, "Back to Menu")) {
+                    menuState = 0;
+                }
+                break;
+        }
+
+        EndDrawing();
+        
+        // If we transitioned to state 99, exit the menu frame loop entirely!
+        if (menuState == 99) {
+            break;
+        }
+    }
+
+    // --- GAME ENGINE HANDOFF ---
+    // Now that the menu loops are finished, initialize core configurations and start your gameplay story safely!
+    if (!WindowShouldClose() && (player.gender == 1 || player.gender == 2)) {
+        player.money = 200;
+        player.energy = 100;
+        player.happiness = 100;
+        printf("\nWelcome to Budget Battle, %s!\n", player.name);
+
+        startGame(&player); 
+    }
+
+    CloseWindow();
+    return 0;
+}
+
+
+// --- Your Game Functions Restored and Fixed ---
+void displayStatus(struct Player player) {
+    DrawRectangle(0, 0, 1250, 60, DARKGRAY);
+    DrawRectangleLines(0, 0, 1250, 60, MAROON);
+
+    char moneyText[50];
+    char energyText[50];
+    char happyText[50];
+    
+    sprintf(moneyText, "Money: PHP %d", player.money);
+    sprintf(energyText, "Energy: %d/100", player.energy);
+    sprintf(happyText, "Happiness: %d/100", player.happiness);
+
+    DrawText(moneyText, 1200 / 4 - MeasureText(moneyText, 18) / 2, 20, 18, GREEN);
+    DrawText(energyText, 1200 / 2 - MeasureText(energyText, 18) / 2, 20, 18, ORANGE);
+    DrawText(happyText, 1200 * 3 / 4 - MeasureText(happyText, 18) / 2, 20, 18, PINK);
+}
+
+void updateMoney(struct Player *player, int amount) {
+    player->money += amount;
+}
+
+void updateEnergy(struct Player *player, int amount) {
+    player->energy += amount;
+    if (player->energy > 100) player->energy = 100;
+    if (player->energy < 0) player->energy = 0;
+}
+
+void updateHappiness(struct Player *player, int amount) {
+    player->happiness += amount;
+    if (player->happiness > 100) player->happiness = 100;
+    if (player->happiness < 0) player->happiness = 0;
+}
+
+int spendMoney(struct Player *player, int amount) {
+    if (amount <= 0 || player->money < amount) return 0;
+    player->money -= amount;
+    return 1;
+}
+
+void startGame(struct Player *player)
+{
+    for (int day = 1; day <= 30; day++)
+    {
+        printf("\n========== DAY %d ==========\n", day);
+
+        displayStatus(*player);
+
+        if (day == 1)
+        {
+            day1Story(player);
+        }
+
+        if (day == 2)
+        {
+            day2Story(player);
+        }
+
+        if (day == 3)
+        {
+            day3Story(player);
+        }
+
+        if (day == 4)
+        {
+            day4Story(player);
+        }
+
+        if (day == 5)
+        {
+            day5Story(player);
+        }
+
+        printf("\nPress Enter to continue...");
+        getchar();
+        getchar();
+    }
+
+    printf("\nCongratulations! You completed 30 days!\n");
+}
+
+
+
+void day1Story(struct Player *player)
+{
+    char message[100];
+
+    showDialogue("Narrator",
+                 "You arrive at TUP Manila carrying your backpack.");
+
+    showDialogue("Narrator",
+                 "Students are walking toward their classrooms.");
+
+    showDialogue("Player",
+                 "New chapter, bagong environment. Sana naman this time, hindi puro problema.");
+
+    showDialogue("Narrator",
+                 "Suddenly, someone taps your shoulder.");
+
+    sprintf(message, "Uy! Ikaw ba si %s? Dito ka rin ba?", player->name);
+    showDialogue("Jelo", message);
+
+    showDialogue("Player",
+                 "Oo. Bakit?");
+
+    showDialogue("Jelo",
+                 "Nice! Ako si Jelo. First day mo rin?");
+
+    showDialogue("Player",
+                 "Yeah. Medyo nangangapa pa nga ako dito.");
+
+    showDialogue("Jelo",
+                 "Same! same! Anyway, tara. Kain muna tayo bago class.");
+
+    showDialogue("Player",
+                 "Ngayon agad? Kakadating ko lang.");
+
+    showDialogue("Jelo",
+                 "Omsim! importante ang breakfast. Tsaka libre mo?");
+
+    showDialogue("Player",
+                 "Ha? First day pa lang, uutangan mo na ako?");
+
+    showDialogue("Jelo",
+                 "HAHAHA! Eme lang. Wala rin akong pera.");
+
+    showDialogue("Player", "Sige na nga. Tara, kain tayo.");
+    breakfastChoice(player);
+
+    showDialogue("Jelo", "Busog ka na? Tara na, baka ma-late tayo sa first class!");
+
+    showDialogue("Player", "Wait lang! First day pa lang, ayoko nang ma-late men.");
+
+    showDialogue("Jelo", "Chill ka lang! Alam ko na mga shortcuts dito. Sundan mo 'ko!");
+
+    showDialogue("Narrator", "You and Jelo walk toward your classroom, unaware of the challenges waiting for you.");
+
+    showDialogue("Narrator", "A few minutes later, you finally arrive at your classroom.");
+
+    showDialogue("Jelo", "Welcome to college life! Dito, maraming activities, deadlines, at bawal matulog ng 8 hrs.");
+
+    showDialogue("Player", "Aww, first day pa lang, tinatakot mo na ako.");
+
+    showDialogue("Jelo", "Edni (hindi) kita tinatakot. Pinaghahanda lang kita. HAHAHA!");
+
+    showDialogue("Narrator", "Your professor enters the room and introduces the course.");
+
+    showDialogue("Professor", "Good morning, everyone! I hope you're ready for this semester.");
+
+    showDialogue("Player", "Okay, this might be a challenging semester. Kailangan kong matutong mag-manage ng time at pera.");
+
+    showDialogue("Narrator", "Your first class finally ends. You pack your things and prepare to leave.");
+
+    showDialogue("Jelo", "So, how was your first class? Ready ka na ba sa college life?");
+
+    showDialogue("Player", "I guess. Pero kailangan ko ring maghanap ng paraan para kumita ng pera.");
+
+    showDialogue("Jelo", "Actually, may alam akong hiring malapit dito. Gusto mo bang subukan?");
+
+    showDialogue("Player", "Hiring? Saan?");
+
+    showDialogue("Jelo", "May fast-food branch malapit lang dito. Kailangan daw nila ng bagong crew.");
+
+    showDialogue("Player", "Pwede kaya akong mag-apply kahit student ako?");
+
+    showDialogue("Jelo", "Malay mo! At least may chance kang kumita habang nag-aaral.");
+
+    showDialogue("Player", "Sige. Susubukan ko bukas. Kailangan ko rin talaga ng extra income.");
+
+    showDialogue("Narrator", "After a long first day, you head home thinking about your studies, expenses, and the job opportunity.");
+
+    showDialogue("Narrator", "Tomorrow, a new challenge awaits.");
+
+    printf("\n================================\n");
+    printf("          DAY 1 COMPLETE\n");
+    printf("================================\n");
+}
+
+
+void showDialogue(const char speaker[], const char dialogue[]) {
+    // 1. Safety check: Wait until the player releases ENTER from the previous choice
+    while (IsKeyDown(KEY_ENTER)) {
+        PollInputEvents(); 
+        if (WindowShouldClose()) {
+            CloseWindow();
+            exit(0);
+        }
+    }
+
+    // 2. Loop until they press ENTER down again
+    while (!IsKeyPressed(KEY_ENTER)) {
+        if (WindowShouldClose()) {
+            CloseWindow();
+            exit(0);
+        }
+
+
+        BeginDrawing();
+        // FIXED: This stops old text from bleeding through or overlapping!
+        ClearBackground(GOLD); 
+
+        // Optional: Keep your stats dashboard visible during regular dialogue text segments
+        // displayStatus(*player); 
+
+        // --- DIALOGUE UI LAYOUT ---
+        DrawRectangle(50, 480, 1100, 180, Fade(BLACK, 0.85f)); 
+        DrawRectangleLines(50, 480, 1100, 180, WHITE);
+
+        // Render dialogue elements
+        DrawText(speaker, 80, 505, 24, GOLD);
+        DrawText(dialogue, 80, 550, 20, WHITE);
+        DrawText("[Press ENTER to continue]", 900, 625, 14, LIGHTGRAY);
+        
+        EndDrawing();
+    }
+}
+
+
+
+
+void breakfastChoice(struct Player *player)
+{
+    int choice = 0; 
+    bool choiceMade = false;
+    
+    int des2 = MeasureText("==================================", 20);
+    int bftest = MeasureText("BREAKFAST TIME", 45); 
+    int menuWidth = MeasureText("Bro gutom na ko, ano'ng trip mong breakfast?", 24);
+
+    // Keep loop active until a choice is selected and confirmed
+    while (!choiceMade) {
+        if (WindowShouldClose()) {
+            CloseWindow();
+            exit(0);
+        }
+
+        BeginDrawing();
+        ClearBackground(DARKGRAY); 
+
+        // Always show the player stats at the top
+        displayStatus(*player); 
+
+        DrawText("==================================", (1200 - des2) / 2, 120, 20, WHITE);
+        DrawText("BREAKFAST TIME", (1200 - bftest) / 2, 155, 45, MAROON);
+        DrawText("==================================", (1200 - des2) / 2, 245, 20, WHITE);
+        DrawText("Bro gutom na ko, ano'ng trip mong breakfast?", (1200 - menuWidth) / 2, 300, 24, GOLD);
+
+        // Check button inputs. Once clicked, change stats ONCE and flip choiceMade to true to exit!
+        if (DrawMenuButton(425, 360, 350, 50, "Carinderia meal - PHP 50") && spendMoney(player, 50)) {
+            updateEnergy(player, 25);
+            updateHappiness(player, 10);
+            choiceMade = true;
+        }
+        if (DrawMenuButton(425, 430, 350, 50, "Fast-food meal - PHP 120") && spendMoney(player, 120)) { 
+            updateEnergy(player, 40);
+            updateHappiness(player, 20);
+            choiceMade = true;
+        }
+        
+        if (DrawMenuButton(425, 500, 350, 50, "Skip breakfast - PHP 0")) {
+            updateEnergy(player, -15);
+            updateHappiness(player, -10);
+            choiceMade = true;
+        }
+        
+        EndDrawing();
+    }
+    
+    // Safety check: Wait for the user to lift their finger off the mouse button 
+    // so it doesn't accidentally trigger input bugs in the next dialogue box
+    while(IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        PollInputEvents();
+    }
+}
+
+
+
+
+void day2Story(struct Player *player)
+{
+    printf("\n================================\n");
+    printf("       DAY 2: JOB APPLICATION\n");
+    printf("================================\n");
+
+    showDialogue("Narrator",
+                 "The next afternoon, you arrive at a fast-food branch near TUP Manila.");
+
+    showDialogue("Player",
+                 "Sana matanggap ako. Kailangan ko talaga ng trabaho.");
+
+    showDialogue("Jelo",
+                 "Relax! Just be yourself. Basta huwag mong sabihin na wala kang experience sa lahat. HAHAHA!");
+
+    showDialogue("Player",
+                 "Omsim HAHAHA! Sige na, pasok na tayo.");
+
+    showDialogue("Narrator",
+                 "Inside the branch, you notice a crew member arranging orders.");
+
+    showDialogue("Jelo",
+                 "Mika! May ipapakilala ako sa'yo. Siya yung friend kong naghahanap ng work.");
+
+    showDialogue("Mika",
+                 "Oh, hello! Ikaw pala yung applicant. I'm Mika. Nice to meet you!");
+
+    showDialogue("Player",
+                 "Hi! Nice to meet you too.");
+
+    showDialogue("Mika",
+                 "Wait lang. Tawagin ko muna yung manager namin.");
+
+    showDialogue("Narrator",
+                 "A few moments later, the manager approaches you.");
+
+    showDialogue("Sir Dante",
+                 "Good afternoon. I'm Sir Dante, the branch manager. Ikaw ba yung gustong mag-apply?");
+
+    showDialogue("Player",
+                 "Yes, sir. I'm currently studying at TUP Manila, and I'm looking for a part-time job.");
+
+    showDialogue("Sir Dante",
+                 "Do you have any experience working in a fast-food restaurant?");
+
+    showDialogue("Player",
+                 "Wala pa po, sir. Pero willing po akong matuto.");
+
+    showDialogue("Sir Dante",
+                 "Good. We need someone responsible, especially during busy hours.");
+
+    showDialogue("Mika",
+                 "Don't worry! I'll help you learn the basics.");
+
+    showDialogue("Sir Dante",
+                 "Alright. We'll give you a chance. You can start your training tomorrow.");
+
+    showDialogue("Player",
+                 "Thank you, sir! I'll do my best.");
+
+    showDialogue("Jelo",
+                 "Diba! Sabi ko sa'yo may chance ka! Libre mo na ako mamaya. HAHAHA!");
+
+    showDialogue("Player",
+                 "LALA! Wala pa nga akong sahod!");
+
+    showDialogue("Narrator",
+                 "After the interview, Mika takes you to the preparation area.");
+
+    showDialogue("Mika",
+                 "Since you're new here, let's start with something simple: checking customer orders.");
+
+    showDialogue("Player",
+                 "So kailangan ko lang siguraduhin na tama lahat ng items?");
+
+    showDialogue("Mika",
+                 "Exactly! Always check the receipt before giving the order.");
+
+    showDialogue("Mika",
+                 "Okay, may isang order tayo dito. Let's see if you can spot the mistake.");
+
+    showDialogue("Narrator",
+                 "Mika places a food tray in front of you.");
+
+    orderCheckingGame(player);
+
+    showDialogue("Mika",
+                 "Not bad! Checking orders carefully is one of the most important things here.");
+
+    showDialogue("Player",
+                 "At least may natutunan ako today. Medyo nakaka-pressure din pala.");
+
+    showDialogue("Mika",
+                 "Masasanay ka din. Practice makes perfect!");
+
+    showDialogue("Narrator",
+                 "Your first training activity is complete. You head home, preparing for your first official training shift tomorrow.");
+}
+
+void orderCheckingGame(struct Player *player)
+{
+
+    int choice;
+
+    printf("\n================================\n");
+    printf("       ORDER CHECKING GAME\n");
+    printf("================================\n");
+
+    printf("\nCUSTOMER RECEIPT\n");
+    printf("Burger: 1\n");
+    printf("Fries: 1\n");
+    printf("Drink: 1\n");
+
+    printf("\nACTUAL FOOD TRAY\n");
+    printf("Burger: 1\n");
+    printf("Fries: 1\n");
+    printf("Drink: 2\n");
+
+    printf("\nWhich item has an incorrect quantity?\n");
+    printf("[1] Burger\n");
+    printf("[2] Fries\n");
+    printf("[3] Drink\n");
+
+    do
+    {
+        printf("\nEnter your answer: ");
+        scanf("%d", &choice);
+        getchar();
+
+        if (choice < 1 || choice > 3)
+        {
+            printf("\nInvalid choice! Please select 1, 2, or 3.\n");
+        }
+
+    } while (choice < 1 || choice > 3);
+
+    if (choice == 3)
+    {
+        printf("\nCorrect! You spotted the extra drink.\n");
+
+        updateHappiness(player, 5);
+        updateEnergy(player, -5);
+    }
+    else
+    {
+        printf("\nIncorrect! The drink quantity was wrong.\n");
+
+        updateHappiness(player, -5);
+        updateEnergy(player, -10);
+    }
+
+    printf("\nMika: Always double-check the receipt before serving!\n");
+
+    displayStatus(*player);
+}
+
+void day3Story(struct Player *player)
+{
+    printf("\n================================\n");
+    printf("    DAY 3: FIRST TRAINING SHIFT\n");
+    printf("================================\n");
+
+    showDialogue("Narrator",
+                 "The next afternoon, you arrive at the fast-food branch for your first official training shift.");
+
+    showDialogue("Player",
+                 "First day ko sa actual work. Sana hindi ako magkamali.");
+
+    showDialogue("Mika",
+                 "Good aftie! Ready ka na ba? Today, tuturuan kita kung paano mag-handle ng customer orders.");
+
+    showDialogue("Player",
+                 "Ready na! I'll do my best.");
+
+    showDialogue("Sir Dante",
+                 "Remember, customer satisfaction is important. Always be polite and attentive.");
+
+    showDialogue("Player",
+                 "Understood, sir!");
+
+    showDialogue("Narrator",
+                 "Mika brings you to the counter and prepares your first customer order.");
+
+    showDialogue("Mika",
+                 "Okay, let's see how you handle your first customer!");
+
+    customerServiceGame(player);
+
+    showDialogue("Mika",
+                 "Good job! Remember, always stay polite when dealing with customers.");
+
+    showDialogue("Player",
+                 "Got it! I'll keep that in mind.");
+
+    showDialogue("Narrator",
+                 "You finish your first customer-service activity and continue your training.");
+    showDialogue("Mika",
+                 "That's enough for today. You're getting the hang of it!");
+
+    showDialogue("Player",
+                 "Thank you for guiding me. Marami pa akong kailangang matutunan.");
+
+    showDialogue("Mika",
+                 "Don't worry. Tomorrow, you'll get to try something new.");
+
+    showDialogue("Narrator",
+                 "After your first training shift, you head home to rest and prepare for tomorrow.");
+
+    printf("\n================================\n");
+    printf("          DAY 3 COMPLETE\n");
+    printf("================================\n");
+}
+
+void customerServiceGame(struct Player *player)
+{
+    int choice;
+
+    printf("\n================================\n");
+    printf("      CUSTOMER SERVICE GAME\n");
+    printf("================================\n");
+
+    printf("\nA customer approaches the counter.\n");
+    printf("\"Excuse me, my order is taking too long!\"\n");
+
+    printf("\nHow will you respond?\n");
+    printf("[1] Apologize and politely check the order.\n");
+    printf("[2] Ignore the customer.\n");
+    printf("[3] Tell the customer to wait impatiently.\n");
+
+    do
+    {
+        printf("\nEnter your choice: ");
+        scanf("%d", &choice);
+        getchar();
+
+        if (choice < 1 || choice > 3)
+        {
+            printf("\nInvalid choice! Select 1, 2, or 3.\n");
+        }
+
+    } while (choice < 1 || choice > 3);
+
+    if (choice == 1)
+    {
+        printf("\nCorrect! The customer appreciates your politeness.\n");
+        updateHappiness(player, 5);
+    }
+    else
+    {
+        printf("\nThe customer becomes more frustrated.\n");
+        updateHappiness(player, -5);
+    }
+
+    updateEnergy(player, -5);
+
+    displayStatus(*player);
+}
+
+void day4Story(struct Player *player)
+{
+    printf("\n================================\n");
+    printf(" DAY 4: HANDLING ORDERS\n");
+    printf("================================\n");
+
+    showDialogue("Narrator",
+                 "The next afternoon, you arrive at work. The branch is unusually busy.");
+
+    showDialogue("Mika",
+                 "Good timing! Lunch rush is about to start. Are you ready?");
+
+    showDialogue("Player",
+                 "Wait, ang daming customers! Ganito ba lagi kapag lunch break?");
+
+    showDialogue("Mika",
+                 "Sometimes! Just stay calm and focus on one order at a time.");
+
+    showDialogue("Sir Dante",
+                 "We need everyone's help today. Please work carefully and avoid mistakes.");
+
+    showDialogue("Player",
+                 "Understood, sir. I'll do my best.");
+
+    showDialogue("Narrator",
+                 "You take your position at the counter. Several customers are waiting for their orders.");
+
+    showDialogue("Mika",
+                 "Alright! Let's see how you handle the pressure.");
+
+    showDialogue("Narrator",
+                 "Your next training challenge is about to begin.");
+
+    multipleOrderGame(player);
+
+    showDialogue("Mika",
+                 "Good job! Always compare the receipt with the prepared order.");
+
+    showDialogue("Player",
+                 "That was stressful! But I think I'm getting better.");
+
+    showDialogue("Narrator",
+                 "You successfully complete another training challenge.");
+
+    showDialogue("Mika",
+                 "Not bad! You're becoming more confident with every shift.");
+
+    showDialogue("Player",
+                 "Thanks! I just need more practice.");
+
+    showDialogue("Sir Dante",
+                 "Good work today. Keep improving, and you'll be ready for regular shifts.");
+
+    showDialogue("Narrator",
+                 "Your shift ends. You head home, tired but proud of your progress.");
+
+    printf("\n================================\n");
+    printf("          DAY 4 COMPLETE\n");
+    printf("================================\n");
+}
+
+void multipleOrderGame(struct Player *player)
+{
+    int choice;
+
+    printf("\n================================\n");
+    printf("      MULTIPLE ORDER CHALLENGE\n");
+    printf("================================\n");
+
+    printf("\nCUSTOMER RECEIPT\n");
+    printf("Burger: 2\n");
+    printf("Fries: 2\n");
+    printf("Drinks: 1\n");
+
+    printf("\nPREPARED ORDER\n");
+    printf("Burger: 2\n");
+    printf("Fries: 1\n");
+    printf("Drinks: 1\n");
+
+    printf("\nWhich item is missing?\n");
+    printf("[1] Burger\n");
+    printf("[2] Fries\n");
+    printf("[3] Drinks\n");
+
+    do
+    {
+        printf("\nEnter your answer: ");
+        scanf("%d", &choice);
+        getchar();
+
+        if (choice < 1 || choice > 3)
+        {
+            printf("\nInvalid choice! Select 1, 2, or 3.\n");
+        }
+
+    } while (choice < 1 || choice > 3);
+
+    if (choice == 2)
+    {
+        printf("\nCorrect! One order of fries is missing.\n");
+        updateHappiness(player, 5);
+    }
+    else
+    {
+        printf("\nIncorrect! You missed the missing fries.\n");
+        updateHappiness(player, -5);
+    }
+
+    updateEnergy(player, -10);
+
+    displayStatus(*player);
+}
+
+void day5Story(struct Player *player)
+{
+    printf("\n================================\n");
+    printf("     DAY 5: SALARY DISCUSSION\n");
+    printf("================================\n");
+
+    showDialogue("Narrator",
+                 "You arrive at the branch for another shift. Sir Dante asks to speak with you.");
+
+    showDialogue("Sir Dante",
+                 "Good afternoon! You've been doing well during your training.");
+
+    showDialogue("Player",
+                 "Thank you, sir! I'm still learning, but I'll keep improving.");
+
+    showDialogue("Sir Dante",
+                 "Since you've completed several training shifts, let's discuss your work schedule and salary.");
+
+    showDialogue("Player",
+                 "Really, sir? That's great news!");
+
+    showDialogue("Sir Dante",
+                 "Your salary will be based on your agreed working schedule. We'll explain the payment details before your regular shifts begin.");
+
+    showDialogue("Player",
+                 "Understood, sir. This will really help me with my school expenses.");
+
+    showDialogue("Mika",
+                 "See? Your hard work is starting to pay off!");
+
+    showDialogue("Player",
+                 "Hopefully! Tuition and daily expenses won't pay themselves. HAHAHA!");
+
+    showDialogue("Narrator",
+                 "You feel more motivated knowing that your job can help support your studies.");
+
+    printf("\n================================\n");
+    printf("          DAY 5 COMPLETE\n");
+    printf("================================\n");
+}
